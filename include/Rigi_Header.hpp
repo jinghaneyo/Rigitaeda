@@ -9,5 +9,6 @@
 #include "Rigi_TCPServerMgr.hpp"
 #include "Rigi_TCPSession.hpp"
 #include "Rigi_Codec_Syslog.hpp"
+#include "Rigi_Codec_RESP.hpp"
 
 #endif
