@@ -31,11 +31,11 @@ namespace Rigitaeda
 		std::string m_strServerIP;
 		std::string m_strServerPort;
 
-		boost::asio::io_service *m_pio_service;
+		boost::asio::io_context *m_pio_service;
 	public:
 		bool Connect( 	__in const char *_pszHost, 
 						__in const char *_pszPort,
-						__in boost::asio::io_service &io_service )
+						__in boost::asio::io_context &io_service )
 		{
 			boost::asio::ip::tcp::resolver resolver(io_service);
 			boost::asio::ip::tcp::resolver::query query( _pszHost, _pszPort );
@@ -75,7 +75,7 @@ namespace Rigitaeda
 
 		bool Connect( 	__in const char *_pszHost, 
 						__in int _nPort, 
-						__in boost::asio::io_service &io_service )
+						__in boost::asio::io_context &io_service )
 		{
 			m_strServerIP = _pszHost;
 			m_strServerPort = std::to_string(_nPort);
@@ -86,7 +86,7 @@ namespace Rigitaeda
 				return false;
 		}
 
-		bool Reconnect( __in boost::asio::io_service &io_service )
+		bool Reconnect( __in boost::asio::io_context &io_service )
 		{
 			try
 			{

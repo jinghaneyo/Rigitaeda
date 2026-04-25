@@ -4,6 +4,7 @@
 #include "Rigi_Def.hpp"
 #include "Rigi_TCPSession.hpp"
 //#include "Rigi_UDPSession.hpp"
+#include <mutex>
 
 namespace Rigitaeda
 {
@@ -19,6 +20,7 @@ namespace Rigitaeda
 		int m_nReceive_Packet_Size;
 
 		std::map<Rigi_TCPSession *, Rigi_TCPSession *>  m_mapTCP;
+		std::mutex                                      m_mutex;
 		//std::map<Rigi_UDPSession *, Rigi_UDPSession *>  m_mapUDP;
 
 		Rigi_Server 	*m_pRigi_Server;

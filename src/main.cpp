@@ -32,7 +32,7 @@ int main()
 
     std::cout << "[START] << server run" << std::endl;
 
-	Rigi_TCPMgr<TCPSessionTest> tcp;
+	Rigi_TCPServerMgr<TCPSessionTest> tcp;
 	Rigi_Server server;
 	server.Run( 3333, 100, &tcp );
 

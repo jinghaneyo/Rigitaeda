@@ -1,6 +1,8 @@
 #include "Rigi_TCPSession.hpp"
 #include "Rigi_TCPServerMgr.hpp"
 #include "Rigi_SessionPool.hpp"
+#include <vector>
+#include <memory>
 
 using namespace Rigitaeda;
 
@@ -21,6 +23,7 @@ Rigi_TCPSession::Rigi_TCPSession()
 	m_pSessionPool = nullptr;
 	m_pReceive_Packet_Buffer = nullptr;
 	m_nReceive_Packet_Size = 0;
+	m_bSending = false;
 
 	m_Func_Event_Close = nullptr;
 	m_Func_Event_Init = nullptr;
@@ -58,17 +61,37 @@ void Rigi_TCPSession::Handler_Receive( 	__in const boost::system::error_code& _e
 	}
 
 	if (_error)
-	{	
-		//std::cout << "[Rigi_TCPSession::Handler_Receive] OnClose !!" << std::endl; 
+	{
 		OnEvent_Close();
 		Close(_error);
 	}
 	else
 	{
-		//std::cout << "RECV << " << m_pReceive_Packet_Buffer << std::endl;
-		OnEvent_Receive( m_pReceive_Packet_Buffer, _bytes_transferred );
+		if (m_pCodec)
+		{
+			// 코덱이 설정된 경우: 스트림을 완성 메시지 단위로 분리 후 OnMessage 호출
+			m_pCodec->decode(m_pReceive_Packet_Buffer, _bytes_transferred,
+				[this](const char* msg, size_t len) {
+					if (m_dispatcher)
+					{
+						// 워커 스레드 풀로 디스패치: shared_ptr로 버퍼 수명 보장
+						auto buf = std::make_shared<std::vector<char>>(msg, msg + len);
+						m_dispatcher([this, buf]() {
+							OnMessage(buf->data(), buf->size());
+						});
+					}
+					else
+					{
+						OnMessage(msg, len);
+					}
+				});
+		}
+		else
+		{
+			// 코덱 미설정: 기존 방식 그대로 (하위 호환)
+			OnEvent_Receive(m_pReceive_Packet_Buffer, _bytes_transferred);
+		}
 		BufferClear();
-
 		Async_Receive();
 	}
 }
@@ -117,8 +140,8 @@ void Rigi_TCPSession::Async_Receive()
 	CATCH_EXCEPTION( );
 }
 
-size_t Rigi_TCPSession::Sync_Send(	__in const char* _pData, 
-									__in size_t _nSize )
+int Rigi_TCPSession::Sync_Send(	__in const char* _pData,
+								__in size_t _nSize )
 {
 	if (nullptr == m_pSocket)
 	{
@@ -128,7 +151,7 @@ size_t Rigi_TCPSession::Sync_Send(	__in const char* _pData,
 
 	try
 	{
-		size_t SendLeng = m_pSocket->send(boost::asio::buffer(_pData, _nSize));
+		int SendLeng = static_cast<int>(m_pSocket->send(boost::asio::buffer(_pData, _nSize)));
 		return SendLeng;
 	}
 	CATCH_EXCEPTION();
@@ -138,26 +161,59 @@ size_t Rigi_TCPSession::Sync_Send(	__in const char* _pData,
 	return -1;
 }
 
-void Rigi_TCPSession::ASync_Send( 	__in const char* _pData, 
+void Rigi_TCPSession::ASync_Send( 	__in const char* _pData,
 							 		__in size_t _nSize)
 {
 	if (nullptr == m_pSocket)
+		return;
+
+	// 코덱이 있으면 encode(프레임 추가), 없으면 그대로
+	std::vector<char> frame;
+	if (m_pCodec)
+		frame = m_pCodec->encode(_pData, _nSize);
+	else
+		frame = std::vector<char>(_pData, _pData + _nSize);
+
+	std::lock_guard<std::mutex> lock(m_send_mutex);
+	bool idle = !m_bSending && m_send_queue.empty();
+	m_send_queue.push_back(std::move(frame));
+	if (idle)
+		do_send();
+}
+
+void Rigi_TCPSession::do_send()
+{
+	// m_send_mutex 보유 상태에서 호출
+	if (m_send_queue.empty() || nullptr == m_pSocket)
 	{
-		//ASSERT(0 && "[Rigi_TCPSession::Async_Send] m_pSocket is not nullptr!!!");
+		m_bSending = false;
 		return;
 	}
 
-	try
-	{
-		boost::asio::async_write( 	*m_pSocket, 
-									boost::asio::buffer(_pData, _nSize),
-									boost::bind( &Rigi_TCPSession::Handler_Send, 
-												this,
-												boost::asio::placeholders::error,
-												boost::asio::placeholders::bytes_transferred )
-		);
-	}
-	CATCH_EXCEPTION( );
+	m_bSending = true;
+	auto buf = std::make_shared<std::vector<char>>(std::move(m_send_queue.front()));
+	m_send_queue.pop_front();
+
+	boost::asio::async_write(*m_pSocket,
+		boost::asio::buffer(*buf),
+		[this, buf](const boost::system::error_code& error, size_t bytes_transferred)
+		{
+			if (!error)
+			{
+				OnEvent_Sended(bytes_transferred);
+				std::lock_guard<std::mutex> lock(m_send_mutex);
+				do_send();  // 다음 항목 전송
+			}
+			else
+			{
+				{
+					std::lock_guard<std::mutex> lock(m_send_mutex);
+					m_bSending = false;
+					m_send_queue.clear();
+				}
+				Handler_Send(error, bytes_transferred);
+			}
+		});
 }
 
 void Rigi_TCPSession::Close( __in const boost::system::error_code& _error )
@@ -167,20 +223,25 @@ void Rigi_TCPSession::Close( __in const boost::system::error_code& _error )
 
 	try
 	{
-		if (true == m_pSocket->is_open())
-		{
-			//std::string strClientIP = Get_SessionIP();
-			//LOG(INFO) << "[CLOSE] " << strClientIP;
-
+		if (m_pSocket->is_open())
 			m_pSocket->close();
-			m_pSocket = nullptr;
-		}
 	}
 	CATCH_EXCEPTION( );
 
-	if(nullptr != m_pSessionPool)
-		m_pSessionPool->Close_Session(this);
+	delete m_pSocket;
+	m_pSocket = nullptr;
+
+	{
+		std::lock_guard<std::mutex> lock(m_send_mutex);
+		m_send_queue.clear();
+		m_bSending = false;
+	}
+
+	// pool을 먼저 null로 만들어야 Close_Session → delete this 이후 멤버 접근 UB를 막는다
+	Rigi_SessionPool* pool = m_pSessionPool;
 	m_pSessionPool = nullptr;
+	if (nullptr != pool)
+		pool->Close_Session(this);  // 내부에서 delete this 가능 — 이후 멤버 접근 없음
 }
 
 void Rigi_TCPSession::Close()
