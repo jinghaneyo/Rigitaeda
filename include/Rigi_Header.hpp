@@ -8,5 +8,6 @@
 #include "Rigi_SessionPool.hpp"
 #include "Rigi_TCPServerMgr.hpp"
 #include "Rigi_TCPSession.hpp"
+#include "Rigi_Codec_Syslog.hpp"
 
 #endif
