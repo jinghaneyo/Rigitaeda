@@ -11,5 +11,6 @@
 #include "Rigi_Codec_Syslog.hpp"
 #include "Rigi_Codec_RESP.hpp"
 #include "Rigi_Codec_MQTT.hpp"
+#include "Rigi_Codec_HTTP1.hpp"
 
 #endif
