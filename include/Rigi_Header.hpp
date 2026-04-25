@@ -10,5 +10,6 @@
 #include "Rigi_TCPSession.hpp"
 #include "Rigi_Codec_Syslog.hpp"
 #include "Rigi_Codec_RESP.hpp"
+#include "Rigi_Codec_MQTT.hpp"
 
 #endif
